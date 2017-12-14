@@ -99,18 +99,19 @@ class HMM(BaseModel2):
 
     dist_logits_zeroed = self.input_weight_mask(features, dist_logits)
     dist_logits_denom = tf.reduce_sum(dist_logits_zeroed, axis=1, keep_dims=True)
-    dist_probs = tf.expand_dims(common_utils.safe_div(dist_logits_zeroed, dist_logits_denom))
+    dist_probs = tf.expand_dims(common_utils.safe_div(dist_logits_zeroed, dist_logits_denom), -1)
 
     targets_repeated = tf.tile(tf.expand_dims(targets, 1), tf.convert_to_tensor([1, max_src_len, 1]))
     # targets_repeated is [batch_size, src_len, trg_len]
 
-    factors = self.get_lex_score_factors(lex_probs_num, inputs_weights)
+    factors = self.get_lex_score_factors(lex_probs_num, inputs)
     lex_probs_flat = tf.reshape(lex_probs_num, [batch_size*max_src_len, params.targets_vocab_size])
     targets_flat = tf.reshape(targets_repeated, [batch_size*max_src_len, max_trg_len])
     lex_scores_flat = common_utils.gather_2d(lex_probs_flat, targets_flat)
     lex_scores = tf.reshape(lex_scores_flat, [batch_size, max_src_len, max_trg_len])
+    lex_probs = factors * lex_probs
     last_forward_probs = self.compute_forward_probs(batch_size, max_src_len, max_trg_len,
-                                                    lex_scores, dist_probs) 
+                                                    lex_probs, dist_probs) 
     # last_forward_probs: [batch_size, src_len, 1]
     return -common_utils.safe_log(tf.reduce_sum(last_forward_probs, 1))
 
@@ -145,13 +146,15 @@ class HMM(BaseModel2):
 
   def predict_next_word(self, features, params, precomputed):
     lex_probs_num, dist_logits = precomputed
+
     dist_probs_num = self.input_weight_mask(features, dist_logits)
     dist_probs_denom = tf.reduce_sum(dist_probs_num, axis=1, keep_dims=True)
     dist_probs = tf.expand_dims(common_utils.safe_div(dist_probs_num, dist_probs_denom), -1)
     # dist_probs is [batch_size, max_src_len, 1]
     factors = self.get_lex_score_factors(lex_probs_num, features['inputs'])
-    inner = factors * lex_probs_num * dist_probs
-    # inner has shape [batch_size, max_src_length, trg_vocab_size]
-    return common_utils.safe_log(tf.reduce_sum(inner, axis=1))
+    lex_probs = factors * lex_probs_num
+    last_forward_probs = self.compute_forward_probs(batch_size, max_src_len, max_trg_len,
+                                                    lex_probs, dist_probs)                           
+    return common_utils.safe_log(tf.reduce_sum(last_forward_probs, axis=1))
 
     
